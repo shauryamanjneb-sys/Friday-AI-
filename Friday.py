@@ -235,7 +235,7 @@ with st.sidebar:
                 "conversation_log": st.session_state.conversation_log.copy()
             })
 
-        # FIXED RESET
+        # FIX
         st.session_state[f"history_{current_user}"] = []
         st.session_state[f"conversation_log_{current_user}"] = []
         st.session_state[f"current_chat_name_{current_user}"] = "New Conversation"
@@ -280,6 +280,7 @@ with st.sidebar:
 # Main UI
 st.title("FRIDAY 🤖")
 
+# Chat name animation (UNCHANGED)
 name_placeholder = st.empty()
 if st.session_state.current_chat_name != "New Conversation":
     displayed = ""
@@ -305,15 +306,8 @@ if prompt := st.chat_input("Talk to FRIDAY..."):
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             reply = assistant_reply(prompt)
-            placeholder = st.empty()
-            full = ""
-            for char in reply:
-                full += char
-                placeholder.markdown(full + "▌")
-                time.sleep(0.012)
-            placeholder.markdown(full)
-           
-            # FIXED dynamic naming
+
+            # FIXED CHAT NAME LOGIC
             if len(st.session_state.conversation_log) <= 4 and not st.session_state.name_finalized:
                 try:
                     context = " ".join(st.session_state.conversation_log[:4])
@@ -329,6 +323,15 @@ if prompt := st.chat_input("Talk to FRIDAY..."):
                         st.session_state.name_finalized = True
                 except:
                     pass
+
+            placeholder = st.empty()
+            full = ""
+            for char in reply:
+                full += char
+                placeholder.markdown(full + "▌")
+                time.sleep(0.012)
+            placeholder.markdown(full)
+
     st.rerun()
 
 st.markdown("---")
