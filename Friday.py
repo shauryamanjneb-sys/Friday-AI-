@@ -141,11 +141,10 @@ You are FRIDAY, a friendly intelligent AI assistant created by Shaurya Anjney.
     )
     return response.choices[0].message.content.strip()
 
-# ---------------- MAIN LOGIC ----------------
+# ---------------- MAIN LOGIC (100% untouched) ----------------
 def assistant_reply(user_input):
     text_lower = user_input.lower()
  
-    # SPECIAL CASES
     if "your name" in text_lower:
         reply = memory_response("name", "My name is FRIDAY.")
         st.session_state.history.append({"role": "user", "content": user_input})
@@ -168,7 +167,6 @@ def assistant_reply(user_input):
         st.session_state.history.append({"role": "assistant", "content": reply})
         return reply
 
-    # 1st to 7th message memory (untouched)
     for n in range(1, 8):
         if f"{n}{'st' if n==1 else 'nd' if n==2 else 'rd' if n==3 else 'th'} message" in text_lower or f"what was my {n}{'st' if n==1 else 'nd' if n==2 else 'rd' if n==3 else 'th'} message" in text_lower:
             if st.session_state.conversation_log and len(st.session_state.conversation_log) >= n:
@@ -180,7 +178,6 @@ def assistant_reply(user_input):
             st.session_state.history.append({"role": "assistant", "content": reply})
             return reply
 
-    # Normal Flow
     st.session_state.history.append({"role": "user", "content": user_input})
     st.session_state.conversation_log.append(user_input)
     if needs_search(user_input):
@@ -205,18 +202,19 @@ if not st.session_state.logged_in:
 
 # --------------------- PER-USER DATA ---------------------
 current_user = st.session_state.current_user
-if f"chats_{current_user}" not in st.session_state:
-    st.session_state[f"chats_{current_user}"] = []
-if f"history_{current_user}" not in st.session_state:
-    st.session_state[f"history_{current_user}"] = []
-if f"conversation_log_{current_user}" not in st.session_state:
-    st.session_state[f"conversation_log_{current_user}"] = []
-if f"memory_{current_user}" not in st.session_state:
-    st.session_state[f"memory_{current_user}"] = {}
-if f"current_chat_name_{current_user}" not in st.session_state:
-    st.session_state[f"current_chat_name_{current_user}"] = "New Conversation"
-if f"name_finalized_{current_user}" not in st.session_state:
-    st.session_state[f"name_finalized_{current_user}"] = False
+for key in [f"chats_{current_user}", f"history_{current_user}", f"conversation_log_{current_user}",
+            f"memory_{current_user}", f"current_chat_name_{current_user}", f"name_finalized_{current_user}"]:
+    if key not in st.session_state:
+        if "chats" in key:
+            st.session_state[key] = []
+        elif "history" in key or "conversation_log" in key:
+            st.session_state[key] = []
+        elif "memory" in key:
+            st.session_state[key] = {}
+        elif "current_chat_name" in key:
+            st.session_state[key] = "New Conversation"
+        else:
+            st.session_state[key] = False
 
 # Shortcuts
 st.session_state.chats = st.session_state[f"chats_{current_user}"]
@@ -226,17 +224,18 @@ st.session_state.memory = st.session_state[f"memory_{current_user}"]
 st.session_state.current_chat_name = st.session_state[f"current_chat_name_{current_user}"]
 st.session_state.name_finalized = st.session_state[f"name_finalized_{current_user}"]
 
-# Sidebar (New Chat fixed)
+# Sidebar - New Chat FIXED
 with st.sidebar:
     st.title("💬 My Chats")
     if st.button("➕ New Chat", type="primary", use_container_width=True):
+        # Save current chat if it has content
         if st.session_state.history or st.session_state.conversation_log:
             st.session_state.chats.append({
-                "name": st.session_state.get("current_chat_name", "New Conversation"),
+                "name": st.session_state.current_chat_name,
                 "history": st.session_state.history.copy(),
                 "conversation_log": st.session_state.conversation_log.copy()
             })
-        # FIXED: Properly reset for new chat
+        # FIXED: Clean reset for truly new chat
         st.session_state.history = []
         st.session_state.conversation_log = []
         st.session_state.current_chat_name = "New Conversation"
@@ -275,6 +274,7 @@ with st.sidebar:
 # Main UI
 st.title("FRIDAY 🤖")
 
+# FIXED: Chat name animation + updates only first 4 messages
 name_placeholder = st.empty()
 if st.session_state.current_chat_name != "New Conversation":
     displayed = ""
@@ -283,6 +283,8 @@ if st.session_state.current_chat_name != "New Conversation":
         name_placeholder.subheader(f"💬 {displayed}▌")
         time.sleep(0.015)
     name_placeholder.subheader(f"💬 {st.session_state.current_chat_name}")
+else:
+    name_placeholder.subheader("💬 New Conversation")
 
 st.markdown("Your friendly AI assistant — created by **Shaurya Anjney** 😊")
 
@@ -306,7 +308,7 @@ if prompt := st.chat_input("Talk to FRIDAY..."):
                 time.sleep(0.012)
             placeholder.markdown(full)
            
-            # FIXED: Chat name updates only on first 4 messages + stops after that
+            # Chat name logic - only first 4 messages, then stops (animation preserved)
             if len(st.session_state.conversation_log) <= 4 and not st.session_state.name_finalized:
                 try:
                     topic_prompt = f"Create a short catchy 3-6 word title for this chat based on the main topic: {st.session_state.conversation_log[0]}"
