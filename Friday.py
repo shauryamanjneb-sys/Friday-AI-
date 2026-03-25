@@ -9,21 +9,29 @@ from ddgs import DDGS
 import time
 
 # ---------------- CONFIG ----------------
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_API_KEYS = st.secrets.get("GROQ_API_KEYS", [os.getenv("GROQ_API_KEY")])
 MODEL = "llama-3.3-70b-versatile"
 
+# API Rotation with caching
 @st.cache_resource(show_spinner=False)
-def get_groq_client():
-    if not GROQ_API_KEY:
-        st.error("GROQ_API_KEY is not set!")
+def get_groq_client(api_key):
+    if not api_key:
+        st.error("❌ No Groq API key found!")
         st.stop()
-    return Groq(api_key=GROQ_API_KEY)
+    return Groq(api_key=api_key)
 
-client = get_groq_client()
+if "current_key_index" not in st.session_state:
+    st.session_state.current_key_index = 0
+
+def get_current_client():
+    if not GROQ_API_KEYS or not GROQ_API_KEYS[0]:
+        st.error("❌ No Groq API keys found in Secrets!")
+        st.stop()
+    key = GROQ_API_KEYS[st.session_state.current_key_index % len(GROQ_API_KEYS)]
+    return get_groq_client(key)
 
 # ---------------- USERS FILE ----------------
 USERS_FILE = "users.json"
-
 def load_users():
     if os.path.exists(USERS_FILE):
         with open(USERS_FILE, "r") as f:
@@ -126,7 +134,7 @@ def memory_response(key, base_answer):
         return f"Happy to repeat it! {base_answer}"
     return base_answer
 
-# ---------------- LLM ----------------
+# ---------------- LLM with SILENT API ROTATION ----------------
 def ask_llm(user_prompt):
     clean_history = []
     for msg in st.session_state.history[-12:]:
@@ -135,7 +143,7 @@ def ask_llm(user_prompt):
                 "role": msg["role"],
                 "content": msg["content"].strip()
             })
-    
+   
     messages = [{
         "role": "system",
         "content": """
@@ -147,21 +155,30 @@ You are FRIDAY, a friendly intelligent AI assistant created by Shaurya Anjney.
 - If the user asks "who is shaurya" or "who is shaurya anjney", just say: "Shaurya Anjney is the brilliant creator behind my existence."
 """
     }]
-    
+   
     messages.extend(clean_history)
     messages.append({"role": "user", "content": str(user_prompt).strip()})
-    
-    try:
-        response = client.chat.completions.create(
-            model=MODEL,
-            temperature=0.3,
-            max_tokens=600,
-            messages=messages
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        st.error(f"Groq API Error: {str(e)}")
-        return "Sorry, I'm having trouble connecting right now 😓 Please try again."
+   
+    max_retries = len(GROQ_API_KEYS) * 2
+    for attempt in range(max_retries):
+        try:
+            client = get_current_client()
+            response = client.chat.completions.create(
+                model=MODEL,
+                temperature=0.3,
+                max_tokens=600,
+                messages=messages
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            error_str = str(e).lower()
+            if "rate limit" in error_str or "429" in str(e):
+                st.session_state.current_key_index += 1   # Silent switch to next key
+                continue
+            else:
+                st.error(f"Groq API Error: {str(e)}")
+                return "Sorry, I'm having trouble connecting right now 😓 Please try again."
+    return "All API keys are rate limited. Please wait a few minutes 😓"
 
 # ---------------- MAIN LOGIC ----------------
 def assistant_reply(user_input):
@@ -187,7 +204,7 @@ def assistant_reply(user_input):
         st.session_state.history.append({"role": "user", "content": user_input})
         st.session_state.history.append({"role": "assistant", "content": reply})
         return reply
-   
+  
     for n in range(1, 8):
         if f"{n}{'st' if n==1 else 'nd' if n==2 else 'rd' if n==3 else 'th'} message" in text_lower or f"what was my {n}{'st' if n==1 else 'nd' if n==2 else 'rd' if n==3 else 'th'} message" in text_lower:
             if st.session_state.conversation_log and len(st.session_state.conversation_log) >= n:
@@ -212,7 +229,6 @@ def assistant_reply(user_input):
 
 # ====================== STREAMLIT UI ======================
 st.set_page_config(page_title="FRIDAY", page_icon="🤖", layout="wide")
-
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 if not st.session_state.logged_in:
@@ -220,7 +236,6 @@ if not st.session_state.logged_in:
     st.stop()
 
 current_user = st.session_state.current_user
-
 users = load_users()
 if current_user in users and "chats" in users[current_user]:
     st.session_state[f"chats_{current_user}"] = users[current_user]["chats"]
@@ -263,7 +278,7 @@ with st.sidebar:
                 users[current_user] = {"chats": []}
             users[current_user]["chats"] = st.session_state.chats
             save_users(users)
-       
+      
         st.session_state[f"history_{current_user}"] = []
         st.session_state[f"conversation_log_{current_user}"] = []
         st.session_state[f"current_chat_name_{current_user}"] = "New Conversation"
@@ -284,7 +299,7 @@ with st.sidebar:
                     st.session_state[f"conversation_log_{current_user}"] = chat["conversation_log"].copy()
                     st.session_state[f"current_chat_name_{current_user}"] = chat["name"]
                     st.session_state[f"name_finalized_{current_user}"] = True
-                   
+                  
                     st.session_state.history = chat["history"].copy()
                     st.session_state.conversation_log = chat["conversation_log"].copy()
                     st.session_state.current_chat_name = chat["name"]
@@ -311,12 +326,12 @@ with st.sidebar:
                     if "manually_edited" not in st.session_state:
                         st.session_state.manually_edited = {}
                     st.session_state.manually_edited[new_name] = True
-                   
+                  
                     users = load_users()
                     if current_user in users:
                         users[current_user]["chats"] = st.session_state.chats
                         save_users(users)
-                   
+                  
                     del st.session_state.edit_chat_index
                     st.rerun()
             with c2:
@@ -342,7 +357,6 @@ with st.sidebar:
 
 # Main UI
 st.title("FRIDAY 🤖")
-
 name_placeholder = st.empty()
 if st.session_state.current_chat_name != "New Conversation":
     if st.session_state.get("manually_edited") and st.session_state.current_chat_name in st.session_state.get("manually_edited", {}):
@@ -356,9 +370,7 @@ if st.session_state.current_chat_name != "New Conversation":
         name_placeholder.subheader(f"💬 {st.session_state.current_chat_name}")
 else:
     name_placeholder.subheader("💬 New Conversation")
-
 st.markdown("Your friendly AI assistant — created by **Shaurya Anjney** 😊")
-
 chat_container = st.container(height=520, border=True)
 with chat_container:
     for msg in st.session_state.history:
@@ -368,11 +380,11 @@ with chat_container:
 if prompt := st.chat_input("Talk to FRIDAY..."):
     with st.chat_message("user"):
         st.markdown(prompt)
-   
+  
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             reply = assistant_reply(prompt)
-           
+          
             if (len(st.session_state.conversation_log) >= 2 and not st.session_state.name_finalized):
                 try:
                     context = " ".join(st.session_state.conversation_log[:4])
@@ -383,7 +395,7 @@ Return ONLY the title, nothing else. No quotes, no explanation.
 Conversation so far:
 {context}
 """
-                    name_resp = client.chat.completions.create(
+                    name_resp = get_current_client().chat.completions.create(
                         model=MODEL,
                         temperature=0.75,
                         max_tokens=30,
@@ -391,10 +403,10 @@ Conversation so far:
                     )
                     new_name = name_resp.choices[0].message.content.strip()
                     new_name = (new_name.replace('"', '').replace("'", "").strip())
-                   
+                  
                     if ":" in new_name and len(new_name.split(":")[0]) < 15:
                         new_name = new_name.split(":", 1)[1].strip()
-                   
+                  
                     if new_name and 5 <= len(new_name) <= 60:
                         st.session_state.current_chat_name = new_name
                         st.session_state.name_finalized = True
@@ -402,7 +414,7 @@ Conversation so far:
                         st.session_state[f"name_finalized_{current_user}"] = True
                 except:
                     pass
-           
+          
             placeholder = st.empty()
             full = ""
             for char in reply:
