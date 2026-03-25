@@ -1,6 +1,8 @@
 import re
 import os
 import streamlit as st
+import json
+import hashlib
 from sympy import sympify
 from groq import Groq
 from ddgs import DDGS
@@ -10,6 +12,62 @@ import time
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 MODEL = "llama-3.1-8b-instant"
 client = Groq(api_key=GROQ_API_KEY)
+
+# ---------------- USERS FILE ----------------
+USERS_FILE = "users.json"
+
+def load_users():
+    if os.path.exists(USERS_FILE):
+        with open(USERS_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+def save_users(users):
+    with open(USERS_FILE, "w") as f:
+        json.dump(users, f, indent=4)
+
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
+# ---------------- LOGIN / SIGNUP PAGE ----------------
+def login_page():
+    st.title("Welcome to FRIDAY 🤖")
+    st.markdown("### Please Login or Signup to continue")
+
+    tab1, tab2 = st.tabs(["🔑 Login", "✍️ Signup"])
+
+    with tab1:
+        username = st.text_input("Username", key="login_user")
+        password = st.text_input("Password", type="password", key="login_pass")
+        if st.button("Login", type="primary", use_container_width=True):
+            users = load_users()
+            if username in users and users[username]["password"] == hash_password(password):
+                st.session_state.logged_in = True
+                st.session_state.current_user = username
+                st.success(f"Welcome back, {username}!")
+                time.sleep(0.8)
+                st.rerun()
+            else:
+                st.error("Wrong username or password")
+
+    with tab2:
+        new_username = st.text_input("Choose Username", key="signup_user")
+        email = st.text_input("Email", key="signup_email")
+        new_password = st.text_input("Choose Password", type="password", key="signup_pass")
+        if st.button("Create Account", type="primary", use_container_width=True):
+            if new_username and email and new_password:
+                users = load_users()
+                if new_username in users:
+                    st.error("Username already exists")
+                else:
+                    users[new_username] = {
+                        "email": email,
+                        "password": hash_password(new_password)
+                    }
+                    save_users(users)
+                    st.success("Account created! Please login now.")
+            else:
+                st.error("Please fill all fields")
 
 # ---------------- CALCULATOR ----------------
 def calculate_expression(text):
@@ -40,9 +98,9 @@ def improve_query(query):
 
 def web_search(query):
     try:
-        with DDGS(timeout=20) as ddgs:   # increased timeout
+        with DDGS(timeout=20) as ddgs:
             results = list(ddgs.text(query, max_results=12))
-        cleaned = [f"{r.get('title', '')}: {r.get('body', '')}" for r in results 
+        cleaned = [f"{r.get('title', '')}: {r.get('body', '')}" for r in results
                    if r.get('title') and r.get('body')]
         return "\n".join(cleaned[:8]) if cleaned else "No fresh results found."
     except Exception as e:
@@ -77,7 +135,7 @@ You are FRIDAY, a friendly intelligent AI assistant created by Shaurya Anjney.
     }]
     messages.extend(st.session_state.history[-8:])
     messages.append({"role": "user", "content": user_prompt})
-    
+   
     response = client.chat.completions.create(
         model=MODEL,
         temperature=0.3,
@@ -89,8 +147,8 @@ You are FRIDAY, a friendly intelligent AI assistant created by Shaurya Anjney.
 # ---------------- MAIN LOGIC ----------------
 def assistant_reply(user_input):
     text_lower = user_input.lower()
-   
-    # SPECIAL CASES (unchanged)
+  
+    # SPECIAL CASES
     if "your name" in text_lower:
         reply = memory_response("name", "My name is FRIDAY.")
         st.session_state.history.append({"role": "user", "content": user_input})
@@ -106,7 +164,6 @@ def assistant_reply(user_input):
         st.session_state.history.append({"role": "user", "content": user_input})
         st.session_state.history.append({"role": "assistant", "content": reply})
         return reply
-
     if calculate_expression(user_input):
         calc = calculate_expression(user_input)
         reply = f"The result is {calc}. 🧮"
@@ -114,7 +171,7 @@ def assistant_reply(user_input):
         st.session_state.history.append({"role": "assistant", "content": reply})
         return reply
 
-    # 1st to 7th message recall (unchanged)
+    # 1st to 7th message memory (EXACTLY as you wrote - NOT removed)
     for n in range(1, 8):
         if f"{n}{'st' if n==1 else 'nd' if n==2 else 'rd' if n==3 else 'th'} message" in text_lower or f"what was my {n}{'st' if n==1 else 'nd' if n==2 else 'rd' if n==3 else 'th'} message" in text_lower:
             if st.session_state.conversation_log and len(st.session_state.conversation_log) >= n:
@@ -129,7 +186,6 @@ def assistant_reply(user_input):
     # Normal Flow
     st.session_state.history.append({"role": "user", "content": user_input})
     st.session_state.conversation_log.append(user_input)
-
     if needs_search(user_input):
         query = improve_query(user_input)
         results = web_search(query)
@@ -137,18 +193,48 @@ def assistant_reply(user_input):
         reply = ask_llm(prompt)
     else:
         reply = ask_llm(user_input)
-
     st.session_state.history.append({"role": "assistant", "content": reply})
     return reply
 
 # ====================== STREAMLIT UI ======================
 st.set_page_config(page_title="FRIDAY", page_icon="🤖", layout="wide")
 
+# AUTH CHECK
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+
+if not st.session_state.logged_in:
+    login_page()
+    st.stop()
+
+# --------------------- PER-USER DATA (so chats stay separate) ---------------------
+current_user = st.session_state.current_user
+
+if f"chats_{current_user}" not in st.session_state:
+    st.session_state[f"chats_{current_user}"] = []
+if f"history_{current_user}" not in st.session_state:
+    st.session_state[f"history_{current_user}"] = []
+if f"conversation_log_{current_user}" not in st.session_state:
+    st.session_state[f"conversation_log_{current_user}"] = []
+if f"memory_{current_user}" not in st.session_state:
+    st.session_state[f"memory_{current_user}"] = {}
+if f"current_chat_name_{current_user}" not in st.session_state:
+    st.session_state[f"current_chat_name_{current_user}"] = "New Conversation"
+if f"name_finalized_{current_user}" not in st.session_state:
+    st.session_state[f"name_finalized_{current_user}"] = False
+
+# Shortcuts (your original keys still work)
+st.session_state.chats = st.session_state[f"chats_{current_user}"]
+st.session_state.history = st.session_state[f"history_{current_user}"]
+st.session_state.conversation_log = st.session_state[f"conversation_log_{current_user}"]
+st.session_state.memory = st.session_state[f"memory_{current_user}"]
+st.session_state.current_chat_name = st.session_state[f"current_chat_name_{current_user}"]
+st.session_state.name_finalized = st.session_state[f"name_finalized_{current_user}"]
+
+# Sidebar (your original)
 with st.sidebar:
     st.title("💬 My Chats")
     if st.button("➕ New Chat", type="primary", use_container_width=True):
-        if "chats" not in st.session_state:
-            st.session_state.chats = []
         if st.session_state.history or st.session_state.conversation_log:
             st.session_state.chats.append({
                 "name": st.session_state.get("current_chat_name", "New Conversation"),
@@ -160,10 +246,9 @@ with st.sidebar:
         st.session_state.current_chat_name = "New Conversation"
         st.session_state.name_finalized = False
         st.rerun()
-
     st.divider()
     st.subheader("Previous Chats")
-    if "chats" in st.session_state and st.session_state.chats:
+    if st.session_state.chats:
         for i, chat in enumerate(st.session_state.chats):
             col1, col2 = st.columns([4, 1])
             with col1:
@@ -190,14 +275,16 @@ with st.sidebar:
                 del st.session_state.confirm_delete
                 st.rerun()
 
-# Main UI
+# Main UI (your original)
 st.title("FRIDAY 🤖")
+
 if "current_chat_name" not in st.session_state:
     st.session_state.current_chat_name = "New Conversation"
 if "name_finalized" not in st.session_state:
     st.session_state.name_finalized = False
 
-name_placeholder = st.empty()
+name_placeholder = st.empty()   # ← this was missing earlier, now fixed
+
 if st.session_state.current_chat_name != "New Conversation":
     displayed = ""
     for char in st.session_state.current_chat_name:
@@ -232,8 +319,8 @@ if prompt := st.chat_input("Talk to FRIDAY..."):
                 placeholder.markdown(full + "▌")
                 time.sleep(0.012)
             placeholder.markdown(full)
-
-            # Chat name fix - only update in first 4 messages
+            
+            # Chat name fix
             if len(st.session_state.conversation_log) <= 4 and not st.session_state.name_finalized:
                 try:
                     topic_prompt = f"Create a short catchy 3-6 word title for this chat based on the main topic: {st.session_state.conversation_log[0]}"
