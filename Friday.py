@@ -165,6 +165,8 @@ def assistant_reply(user_input):
         st.session_state.history.append({"role": "user", "content": user_input})
         st.session_state.history.append({"role": "assistant", "content": reply})
         return reply
+    
+    # 1 to 7 message memory
     for n in range(1, 8):
         if f"{n}{'st' if n==1 else 'nd' if n==2 else 'rd' if n==3 else 'th'} message" in text_lower or f"what was my {n}{'st' if n==1 else 'nd' if n==2 else 'rd' if n==3 else 'th'} message" in text_lower:
             if st.session_state.conversation_log and len(st.session_state.conversation_log) >= n:
@@ -200,7 +202,7 @@ if not st.session_state.logged_in:
     login_page()
     st.stop()
 
-# --------------------- PER-USER DATA (Fixed) ---------------------
+# --------------------- PER-USER DATA ---------------------
 if "current_user" not in st.session_state:
     st.stop()
 
@@ -228,7 +230,7 @@ st.session_state.memory = st.session_state[f"memory_{current_user}"]
 st.session_state.current_chat_name = st.session_state[f"current_chat_name_{current_user}"]
 st.session_state.name_finalized = st.session_state[f"name_finalized_{current_user}"]
 
-# Sidebar - New Chat
+# Sidebar
 with st.sidebar:
     st.title("💬 My Chats")
     if st.button("➕ New Chat", type="primary", use_container_width=True):
@@ -252,18 +254,46 @@ with st.sidebar:
     st.subheader("Previous Chats")
     if st.session_state.chats:
         for i, chat in enumerate(st.session_state.chats):
-            col1, col2 = st.columns([4, 1])
+            col1, col2, col3 = st.columns([4, 0.5, 0.5])
             with col1:
                 if st.button(chat["name"], key=f"switch_{i}", use_container_width=True):
+                    st.session_state[f"history_{current_user}"] = chat["history"].copy()
+                    st.session_state[f"conversation_log_{current_user}"] = chat["conversation_log"].copy()
+                    st.session_state[f"current_chat_name_{current_user}"] = chat["name"]
+                    st.session_state[f"name_finalized_{current_user}"] = True
+                    
                     st.session_state.history = chat["history"].copy()
                     st.session_state.conversation_log = chat["conversation_log"].copy()
                     st.session_state.current_chat_name = chat["name"]
                     st.session_state.name_finalized = True
                     st.rerun()
             with col2:
+                if st.button("✏️", key=f"edit_btn_{i}", help="Edit chat name"):
+                    st.session_state.edit_chat_index = i
+                    st.rerun()
+            with col3:
                 if st.button("🗑", key=f"del_{i}"):
                     st.session_state.confirm_delete = i
                     st.rerun()
+
+    # Edit Chat Name
+    if "edit_chat_index" in st.session_state:
+        i = st.session_state.edit_chat_index
+        if 0 <= i < len(st.session_state.chats):
+            chat = st.session_state.chats[i]
+            st.write("**Edit chat name**")
+            new_name = st.text_input("New name", value=chat["name"], key="edit_name_input")
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("💾 Save", type="primary"):
+                    chat["name"] = new_name
+                    del st.session_state.edit_chat_index
+                    st.rerun()
+            with c2:
+                if st.button("Cancel"):
+                    del st.session_state.edit_chat_index
+                    st.rerun()
+
     if "confirm_delete" in st.session_state:
         st.warning("Delete this chat permanently?")
         c1, c2 = st.columns(2)
@@ -280,7 +310,7 @@ with st.sidebar:
 # Main UI
 st.title("FRIDAY 🤖")
 
-# Chat name animation (only once)
+# Chat name animation
 name_placeholder = st.empty()
 if st.session_state.current_chat_name != "New Conversation":
     displayed = ""
@@ -308,7 +338,7 @@ if prompt := st.chat_input("Talk to FRIDAY..."):
         with st.spinner("Thinking..."):
             reply = assistant_reply(prompt)
             
-            # FIXED CHAT NAME LOGIC (on 2nd message)
+            # Chat Name Generation on 2nd message
             if (len(st.session_state.conversation_log) >= 2 
                 and not st.session_state.name_finalized):
                 
@@ -340,15 +370,13 @@ Conversation so far:
                     if new_name and 5 <= len(new_name) <= 60:
                         st.session_state.current_chat_name = new_name
                         st.session_state.name_finalized = True
-                        
-                        # Save back to per-user keys
                         st.session_state[f"current_chat_name_{current_user}"] = new_name
                         st.session_state[f"name_finalized_{current_user}"] = True
                         
                 except:
                     pass
             
-            # Streaming
+            # Streaming Reply
             placeholder = st.empty()
             full = ""
             for char in reply:
