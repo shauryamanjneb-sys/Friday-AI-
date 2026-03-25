@@ -10,7 +10,7 @@ import time
 
 # ---------------- CONFIG ----------------
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-MODEL = "llama-3.1-8b-instant"
+MODEL = "llama-3.3-70b-versatile"
 
 @st.cache_resource(show_spinner=False)
 def get_groq_client():
