@@ -33,9 +33,7 @@ def hash_password(password):
 def login_page():
     st.title("Welcome to FRIDAY 🤖")
     st.markdown("### Please Login or Signup to continue")
-
     tab1, tab2 = st.tabs(["🔑 Login", "✍️ Signup"])
-
     with tab1:
         username = st.text_input("Username", key="login_user")
         password = st.text_input("Password", type="password", key="login_pass")
@@ -49,7 +47,6 @@ def login_page():
                 st.rerun()
             else:
                 st.error("Wrong username or password")
-
     with tab2:
         new_username = st.text_input("Choose Username", key="signup_user")
         email = st.text_input("Email", key="signup_email")
@@ -135,7 +132,7 @@ You are FRIDAY, a friendly intelligent AI assistant created by Shaurya Anjney.
     }]
     messages.extend(st.session_state.history[-8:])
     messages.append({"role": "user", "content": user_prompt})
-   
+  
     response = client.chat.completions.create(
         model=MODEL,
         temperature=0.3,
@@ -147,7 +144,7 @@ You are FRIDAY, a friendly intelligent AI assistant created by Shaurya Anjney.
 # ---------------- MAIN LOGIC ----------------
 def assistant_reply(user_input):
     text_lower = user_input.lower()
-  
+ 
     # SPECIAL CASES
     if "your name" in text_lower:
         reply = memory_response("name", "My name is FRIDAY.")
@@ -171,7 +168,7 @@ def assistant_reply(user_input):
         st.session_state.history.append({"role": "assistant", "content": reply})
         return reply
 
-    # 1st to 7th message memory (EXACTLY as you wrote - NOT removed)
+    # 1st to 7th message memory (untouched)
     for n in range(1, 8):
         if f"{n}{'st' if n==1 else 'nd' if n==2 else 'rd' if n==3 else 'th'} message" in text_lower or f"what was my {n}{'st' if n==1 else 'nd' if n==2 else 'rd' if n==3 else 'th'} message" in text_lower:
             if st.session_state.conversation_log and len(st.session_state.conversation_log) >= n:
@@ -202,14 +199,12 @@ st.set_page_config(page_title="FRIDAY", page_icon="🤖", layout="wide")
 # AUTH CHECK
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
-
 if not st.session_state.logged_in:
     login_page()
     st.stop()
 
-# --------------------- PER-USER DATA (so chats stay separate) ---------------------
+# --------------------- PER-USER DATA ---------------------
 current_user = st.session_state.current_user
-
 if f"chats_{current_user}" not in st.session_state:
     st.session_state[f"chats_{current_user}"] = []
 if f"history_{current_user}" not in st.session_state:
@@ -223,7 +218,7 @@ if f"current_chat_name_{current_user}" not in st.session_state:
 if f"name_finalized_{current_user}" not in st.session_state:
     st.session_state[f"name_finalized_{current_user}"] = False
 
-# Shortcuts (your original keys still work)
+# Shortcuts
 st.session_state.chats = st.session_state[f"chats_{current_user}"]
 st.session_state.history = st.session_state[f"history_{current_user}"]
 st.session_state.conversation_log = st.session_state[f"conversation_log_{current_user}"]
@@ -231,7 +226,7 @@ st.session_state.memory = st.session_state[f"memory_{current_user}"]
 st.session_state.current_chat_name = st.session_state[f"current_chat_name_{current_user}"]
 st.session_state.name_finalized = st.session_state[f"name_finalized_{current_user}"]
 
-# Sidebar (your original)
+# Sidebar (New Chat fixed)
 with st.sidebar:
     st.title("💬 My Chats")
     if st.button("➕ New Chat", type="primary", use_container_width=True):
@@ -241,11 +236,13 @@ with st.sidebar:
                 "history": st.session_state.history.copy(),
                 "conversation_log": st.session_state.conversation_log.copy()
             })
+        # FIXED: Properly reset for new chat
         st.session_state.history = []
         st.session_state.conversation_log = []
         st.session_state.current_chat_name = "New Conversation"
         st.session_state.name_finalized = False
         st.rerun()
+
     st.divider()
     st.subheader("Previous Chats")
     if st.session_state.chats:
@@ -275,16 +272,10 @@ with st.sidebar:
                 del st.session_state.confirm_delete
                 st.rerun()
 
-# Main UI (your original)
+# Main UI
 st.title("FRIDAY 🤖")
 
-if "current_chat_name" not in st.session_state:
-    st.session_state.current_chat_name = "New Conversation"
-if "name_finalized" not in st.session_state:
-    st.session_state.name_finalized = False
-
-name_placeholder = st.empty()   # ← this was missing earlier, now fixed
-
+name_placeholder = st.empty()
 if st.session_state.current_chat_name != "New Conversation":
     displayed = ""
     for char in st.session_state.current_chat_name:
@@ -294,11 +285,6 @@ if st.session_state.current_chat_name != "New Conversation":
     name_placeholder.subheader(f"💬 {st.session_state.current_chat_name}")
 
 st.markdown("Your friendly AI assistant — created by **Shaurya Anjney** 😊")
-
-if "history" not in st.session_state: st.session_state.history = []
-if "memory" not in st.session_state: st.session_state.memory = {}
-if "conversation_log" not in st.session_state: st.session_state.conversation_log = []
-if "chats" not in st.session_state: st.session_state.chats = []
 
 chat_container = st.container(height=520, border=True)
 with chat_container:
@@ -319,8 +305,8 @@ if prompt := st.chat_input("Talk to FRIDAY..."):
                 placeholder.markdown(full + "▌")
                 time.sleep(0.012)
             placeholder.markdown(full)
-            
-            # Chat name fix
+           
+            # FIXED: Chat name updates only on first 4 messages + stops after that
             if len(st.session_state.conversation_log) <= 4 and not st.session_state.name_finalized:
                 try:
                     topic_prompt = f"Create a short catchy 3-6 word title for this chat based on the main topic: {st.session_state.conversation_log[0]}"
