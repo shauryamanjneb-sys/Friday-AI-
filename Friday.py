@@ -59,7 +59,8 @@ def login_page():
                 else:
                     users[new_username] = {
                         "email": email,
-                        "password": hash_password(new_password)
+                        "password": hash_password(new_password),
+                        "chats": []
                     }
                     save_users(users)
                     st.success("Account created! Please login now.")
@@ -166,7 +167,6 @@ def assistant_reply(user_input):
         st.session_state.history.append({"role": "assistant", "content": reply})
         return reply
     
-    # 1 to 7 message memory
     for n in range(1, 8):
         if f"{n}{'st' if n==1 else 'nd' if n==2 else 'rd' if n==3 else 'th'} message" in text_lower or f"what was my {n}{'st' if n==1 else 'nd' if n==2 else 'rd' if n==3 else 'th'} message" in text_lower:
             if st.session_state.conversation_log and len(st.session_state.conversation_log) >= n:
@@ -202,11 +202,15 @@ if not st.session_state.logged_in:
     login_page()
     st.stop()
 
-# --------------------- PER-USER DATA ---------------------
-if "current_user" not in st.session_state:
-    st.stop()
-
+# --------------------- PER-USER DATA (Strict Isolation) ---------------------
 current_user = st.session_state.current_user
+
+# Load user's chats from file every time to prevent mixing
+users = load_users()
+if current_user in users and "chats" in users[current_user]:
+    st.session_state[f"chats_{current_user}"] = users[current_user]["chats"]
+else:
+    st.session_state[f"chats_{current_user}"] = []
 
 for key in [f"chats_{current_user}", f"history_{current_user}", f"conversation_log_{current_user}",
             f"memory_{current_user}", f"current_chat_name_{current_user}", f"name_finalized_{current_user}"]:
@@ -240,6 +244,13 @@ with st.sidebar:
                 "history": st.session_state.history.copy(),
                 "conversation_log": st.session_state.conversation_log.copy()
             })
+            # Save immediately
+            users = load_users()
+            if current_user not in users:
+                users[current_user] = {"chats": []}
+            users[current_user]["chats"] = st.session_state.chats
+            save_users(users)
+        
         st.session_state[f"history_{current_user}"] = []
         st.session_state[f"conversation_log_{current_user}"] = []
         st.session_state[f"current_chat_name_{current_user}"] = "New Conversation"
@@ -276,7 +287,7 @@ with st.sidebar:
                     st.session_state.confirm_delete = i
                     st.rerun()
 
-    # Edit Chat Name
+    # Edit Chat Name (No animation after manual edit)
     if "edit_chat_index" in st.session_state:
         i = st.session_state.edit_chat_index
         if 0 <= i < len(st.session_state.chats):
@@ -287,6 +298,16 @@ with st.sidebar:
             with c1:
                 if st.button("💾 Save", type="primary"):
                     chat["name"] = new_name
+                    if "manually_edited" not in st.session_state:
+                        st.session_state.manually_edited = {}
+                    st.session_state.manually_edited[new_name] = True
+                    
+                    # Save to file
+                    users = load_users()
+                    if current_user in users:
+                        users[current_user]["chats"] = st.session_state.chats
+                        save_users(users)
+                    
                     del st.session_state.edit_chat_index
                     st.rerun()
             with c2:
@@ -300,6 +321,10 @@ with st.sidebar:
         with c1:
             if st.button("Yes", type="primary"):
                 del st.session_state.chats[st.session_state.confirm_delete]
+                users = load_users()
+                if current_user in users:
+                    users[current_user]["chats"] = st.session_state.chats
+                    save_users(users)
                 del st.session_state.confirm_delete
                 st.rerun()
         with c2:
@@ -310,15 +335,18 @@ with st.sidebar:
 # Main UI
 st.title("FRIDAY 🤖")
 
-# Chat name animation
+# Chat name display - NO animation if manually edited
 name_placeholder = st.empty()
 if st.session_state.current_chat_name != "New Conversation":
-    displayed = ""
-    for char in st.session_state.current_chat_name:
-        displayed += char
-        name_placeholder.subheader(f"💬 {displayed}▌")
-        time.sleep(0.015)
-    name_placeholder.subheader(f"💬 {st.session_state.current_chat_name}")
+    if st.session_state.get("manually_edited") and st.session_state.current_chat_name in st.session_state.get("manually_edited", {}):
+        name_placeholder.subheader(f"💬 {st.session_state.current_chat_name}")
+    else:
+        displayed = ""
+        for char in st.session_state.current_chat_name:
+            displayed += char
+            name_placeholder.subheader(f"💬 {displayed}▌")
+            time.sleep(0.015)
+        name_placeholder.subheader(f"💬 {st.session_state.current_chat_name}")
 else:
     name_placeholder.subheader("💬 New Conversation")
 
@@ -339,9 +367,7 @@ if prompt := st.chat_input("Talk to FRIDAY..."):
             reply = assistant_reply(prompt)
             
             # Chat Name Generation on 2nd message
-            if (len(st.session_state.conversation_log) >= 2 
-                and not st.session_state.name_finalized):
-                
+            if (len(st.session_state.conversation_log) >= 2 and not st.session_state.name_finalized):
                 try:
                     context = " ".join(st.session_state.conversation_log[:4])
                     topic_prompt = f"""
@@ -359,10 +385,7 @@ Conversation so far:
                         messages=[{"role": "user", "content": topic_prompt}]
                     )
                     new_name = name_resp.choices[0].message.content.strip()
-                    
-                    new_name = (new_name.replace('"', '')
-                                     .replace("'", "")
-                                     .strip())
+                    new_name = (new_name.replace('"', '').replace("'", "").strip())
                     
                     if ":" in new_name and len(new_name.split(":")[0]) < 15:
                         new_name = new_name.split(":", 1)[1].strip()
@@ -372,11 +395,10 @@ Conversation so far:
                         st.session_state.name_finalized = True
                         st.session_state[f"current_chat_name_{current_user}"] = new_name
                         st.session_state[f"name_finalized_{current_user}"] = True
-                        
                 except:
                     pass
             
-            # Streaming Reply
+            # Streaming
             placeholder = st.empty()
             full = ""
             for char in reply:
